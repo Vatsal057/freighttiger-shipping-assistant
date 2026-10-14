@@ -2,6 +2,9 @@
 
 This project monitors weekly road shipping costs across Indian freight corridors, flags unjustified price spikes, and correlates candidate anomalies against external real-world context notes (fuel price hikes, flooding, festival surcharges, toll updates) to provide auditable, grounded justifications.
 
+> 🚚 **Live Interactive Web App (Streamlit):** [https://freighttiger-shipping-assistant.streamlit.app](https://freighttiger-shipping-assistant.streamlit.app)  
+> ⚡ **Cloudflare Edge LLM Proxy (Google Gemini):** `https://freighttiger-llm-proxy.vatxzz.workers.dev`
+
 ---
 
 ## Quickstart
