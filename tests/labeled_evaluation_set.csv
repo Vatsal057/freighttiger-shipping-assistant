@@ -1,0 +1,13 @@
+route,week_of,expected_flagged,expected_note_id,case_type
+Delhi-Jaipur,2024-11-11,Yes,,Sample Target 1 (Unexplained candidate spike)
+Ahmedabad-Mumbai,2025-01-20,No (justified),N002,Sample Target 2 (Valid festival surcharge)
+Mumbai-Pune,2025-09-15,Yes,,Sample Target 3 (Unexplained candidate spike / Distractor N006)
+Chennai-Bangalore,2025-02-24,No (justified),N001,Valid Disruption (Highway flooding active)
+Chennai-Bangalore,2025-03-03,No (justified),N001,Valid Disruption (Highway flooding active)
+Delhi-Chennai,2025-05-05,No (justified),N003,Valid Disruption (Nationwide diesel price hike)
+Mumbai-Delhi,2024-07-29,Yes,,Trap Check (N005 highway maintenance - costs not affected)
+Delhi-Jaipur,2024-05-20,Yes,,Trap Check (N007 road resurfacing - non-disruptive)
+Kolkata-Bhubaneswar,2025-06-09,Yes,,Trap Check (N008 freight remained normal)
+Chennai-Bangalore,2025-03-17,Yes,,Trap Check (N009 corridor returned to normal)
+Mumbai-Pune,2025-10-27,Yes,,Trap Check (N010 tracking mandate - costs absorbed)
+Mumbai-Pune,2025-12-01,Yes,,Unexplained Rate Creep (Structural peer gap outlier)

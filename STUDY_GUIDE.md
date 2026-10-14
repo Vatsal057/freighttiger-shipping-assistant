@@ -106,10 +106,12 @@ An honest unexplained answer scores higher than a confident hallucination.
 The code lives in `src/` and `tests/`:
 
 - `src/core_analysis.py`: Contains the pure Pandas and NumPy math. It loads shipments, groups them into Monday-aligned weeks, computes cost per tonne-km, calculates both baselines, and flags candidate anomalies.
-- `src/justification.py`: Reads `context_notes.csv`, filters out the traps, checks if dates overlap, and builds the reason text.
+- `src/retrieval.py`: Uses TF-IDF sparse vector search and cosine similarity to retrieve top-k candidate notes for each corridor anomaly.
+- `src/justification.py`: Enforces the deterministic verification gate (corridor scope, date boundaries, disruption polarity), filters out planted traps, and builds grounded reasons.
 - `src/pipeline.py`: Runs the whole sequence, exports the clean CSV, and provides the plain English question-answering tool.
 - `src/cli.py`: Gives you simple terminal commands to run the pipeline, verify reproducibility, and check costs.
-- `tests/test_core_analysis.py` and `tests/test_pipeline.py`: 8 automated tests that check all formulas and file contracts.
+- `src/eval_harness.py`: Evaluates the pipeline against a benchmark labeled set, calculating precision and recall.
+- `tests/`: 13 automated unit and guardrail tests covering baselines, contracts, distractors, date boundaries, and retrieval sensitivity.
 
 ---
 
@@ -146,17 +148,18 @@ Every number matches the sample file provided by FreightTiger.
 When you present in Round 2, follow these 5 steps:
 
 1. **Start with the goal (1 min):**
-   "I built a two-stage assistant. Stage 1 is deterministic data analysis that calculates weekly cost per tonne-km and spots cost jumps against history and peers. Stage 2 evaluates context notes with guardrails to prevent false justifications."
+   "I built a two-stage assistant. Stage 1 is deterministic data analysis that calculates weekly cost per tonne-km and spots cost jumps against history and peers. Stage 2 evaluates context notes with TF-IDF sparse vector retrieval followed by a strict verification gate to prevent false justifications."
 2. **Explain the math (2 mins):**
    "To calculate cost per tonne-km, I summed all freight costs and divided by total tonne-km for the week. This prevents small shipments from distorting the route average. For own history, I used the trailing 8 weeks strictly prior to the current week so there is zero lookahead bias."
 3. **Walk through the traps (2 mins):**
    "Several context notes were distractors. Note N004 was for routes outside our dataset, while notes like N005 and N006 noted that costs or demand were unaffected. My system rejects these. If no legitimate note applies, it flags the row as unexplained instead of guessing."
 4. **Discuss determinism, architecture, and cost (2 mins):**
-   "The evaluation required identical outputs across 3 runs. In financial and logistics auditing, anomaly verdicts must be repeatable, auditable, and legally defensible. Relying on an external LLM for simple date overlap checks introduces temperature drift, rate-limit crashes, and hallucination risks on planted distractor notes. I deliberately kept the core audit pipeline deterministic (Python/Pandas) with $0.00 cost, zero API dependencies, and 100% byte-stable SHA-256 reproducibility. Generative AI belongs on the interactive query interface, not in the core financial ledger."
+   "The evaluation required identical outputs across 3 runs. In financial and logistics auditing, anomaly verdicts must be repeatable, auditable, and legally defensible. Relying on an external LLM for simple date overlap checks introduces temperature drift, rate-limit crashes, and hallucination risks on planted distractor notes. I deliberately kept the core audit pipeline deterministic (Python/Pandas/TF-IDF) with $0.00 cost, zero API dependencies, and 100% byte-stable SHA-256 reproducibility. Generative AI belongs on the interactive query interface, not in the core financial ledger."
 5. **Show the live demo (2-3 mins):**
-   Run these two commands on screen:
+   Run these live commands on screen:
    ```bash
    pytest tests/ -v
+   python3 src/eval_harness.py
    python3 src/cli.py verify-reproducibility
    ```
-   Show that all 8 unit tests pass and the SHA-256 hashes match.
+   Show that all 13 unit tests pass, the evaluation harness scores 100%, and the SHA-256 hashes match.

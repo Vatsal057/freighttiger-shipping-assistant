@@ -1,9 +1,9 @@
 /**
- * Cloudflare Worker: Secure LLM Proxy for FreightTiger Assistant.
+ * Cloudflare Worker: Secure Gemini LLM Proxy for FreightTiger Assistant.
  * 
- * Holds the private LLM API key (e.g., GROQ_API_KEY) in encrypted Cloudflare Secrets.
- * Exposes a POST /generate endpoint that forwards prompts to Groq LLaMA-3.3-70B
- * and returns the generated text along with accurate token usage.
+ * Holds the private GEMINI_API_KEY in encrypted Cloudflare Secrets.
+ * Exposes a POST /generate endpoint that forwards prompts to Google Gemini (e.g. gemini-2.5-flash / gemini-1.5-flash)
+ * and returns the generated text along with exact token usage from Gemini metadata.
  */
 
 export default {
@@ -14,7 +14,7 @@ export default {
         headers: {
           "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization",
         },
       });
     }
@@ -22,7 +22,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/health") {
-      return new Response(JSON.stringify({ status: "healthy", model: "llama-3.3-70b-versatile" }), {
+      return new Response(JSON.stringify({ status: "healthy", model: "gemini-flash-latest", provider: "Google Gemini via Cloudflare Worker" }), {
         headers: { "Content-Type": "application/json" },
       });
     }
@@ -47,53 +47,63 @@ export default {
       }
 
       // Check if secret key is configured in Cloudflare environment
-      const apiKey = env.GROQ_API_KEY;
+      const apiKey = env.GEMINI_API_KEY;
       if (!apiKey) {
         return new Response(
           JSON.stringify({
-            error: "GROQ_API_KEY secret is not configured on this Cloudflare Worker.",
+            error: "GEMINI_API_KEY secret is not configured on this Cloudflare Worker. Run 'npx wrangler secret put GEMINI_API_KEY'.",
           }),
           { status: 500, headers: { "Content-Type": "application/json" } }
         );
       }
 
-      // Call Groq LLaMA-3.3-70B API
-      const groqResponse = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      // Call Google Gemini REST API v1beta
+      const modelName = env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey.trim()}`;
+
+      const geminiPayload = {
+        system_instruction: {
+          parts: [{ text: systemPrompt }]
+        },
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: prompt }]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.0,
+          maxOutputTokens: 300,
+        }
+      };
+
+      const geminiResponse = await fetch(geminiUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: prompt },
-          ],
-          temperature: 0.0,
-          max_tokens: 300,
-        }),
+        body: JSON.stringify(geminiPayload),
       });
 
-      if (!groqResponse.ok) {
-        const errText = await groqResponse.text();
+      if (!geminiResponse.ok) {
+        const errText = await geminiResponse.text();
         return new Response(
-          JSON.stringify({ error: "Groq API error", details: errText }),
-          { status: groqResponse.status, headers: { "Content-Type": "application/json" } }
+          JSON.stringify({ error: "Gemini API error", details: errText }),
+          { status: geminiResponse.status, headers: { "Content-Type": "application/json" } }
         );
       }
 
-      const groqData = await groqResponse.json();
-      const answer = groqData.choices?.[0]?.message?.content || "";
-      const usage = groqData.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+      const geminiData = await geminiResponse.json();
+      const answer = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const usage = geminiData.usageMetadata || { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 };
 
       return new Response(
         JSON.stringify({
           output: answer.trim(),
-          input_tokens: usage.prompt_tokens,
-          output_tokens: usage.completion_tokens,
-          model: "llama-3.3-70b-versatile",
-          provider: "Groq via Cloudflare Worker",
+          input_tokens: usage.promptTokenCount,
+          output_tokens: usage.candidatesTokenCount,
+          model: modelName,
+          provider: "Google Gemini via Cloudflare Worker",
         }),
         {
           headers: {

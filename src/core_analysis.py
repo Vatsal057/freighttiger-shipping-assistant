@@ -130,29 +130,35 @@ def identify_candidate_anomalies(
     hist_threshold_pct: float = 15.0,
     peer_threshold_pct: float = 20.0,
     macro_threshold_pct: float = 5.0,
-    macro_min_routes: int = 4,
 ) -> pd.DataFrame:
     """Filter route-weeks where cost rise exceeds history or peer thresholds.
 
-    Also identifies macro surges where a coordinated cost rise (>= macro_threshold_pct)
-    impacts multiple routes (>= macro_min_routes) simultaneously, such as nationwide fuel hikes.
+    Anomaly Criteria:
+    1. Historical Jump: Cost jumped >= hist_threshold_pct (15%) vs its own trailing history.
+    2. Peer Outlier with Genuine Rise: Cost jumped >= peer_threshold_pct (20%) vs same-week
+       peers AND cost is strictly rising vs own history (vs_hist_pct > 0). This prevents
+       flagging cost drops as anomalies merely because a single peer route dropped.
+    3. Network-Wide Macro Surge: Coordinated systemic surge where network median cost rise
+       is >= macro_threshold_pct (5%), capturing events like nationwide diesel hikes.
     """
-    # 1. Standard route-specific or peer anomaly
-    standard_anomaly = (
-        (df_baselines["vs_hist_pct"].fillna(0) >= hist_threshold_pct)
-        | (df_baselines["vs_peer_pct"].fillna(0) >= peer_threshold_pct)
+    hist_diff = df_baselines["vs_hist_pct"].fillna(0.0)
+    peer_diff = df_baselines["vs_peer_pct"].fillna(0.0)
+
+    # Standard route-specific or peer anomaly with strict rising condition
+    standard_anomaly = (hist_diff >= hist_threshold_pct) | (
+        (peer_diff >= peer_threshold_pct) & (df_baselines["vs_hist_pct"] > 0.0)
     )
 
-    # 2. Macro surge detection across the network
+    # Macro surge detection: network-wide median cost rise >= macro_threshold_pct (5.0%)
     macro_weeks = set()
     for week_val, grp in df_baselines.groupby("week_of"):
-        rising_count = (grp["vs_hist_pct"].fillna(0) >= macro_threshold_pct).sum()
-        if rising_count >= macro_min_routes:
+        valid_hist = grp["vs_hist_pct"].dropna()
+        if len(valid_hist) > 0 and valid_hist.median() >= macro_threshold_pct:
             macro_weeks.add(week_val)
 
     is_macro_spike = (
         df_baselines["week_of"].isin(macro_weeks)
-        & (df_baselines["vs_hist_pct"].fillna(0) >= macro_threshold_pct)
+        & (df_baselines["vs_hist_pct"] >= macro_threshold_pct)
     )
 
     candidates = (

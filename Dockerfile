@@ -20,8 +20,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source code, tests, and dataset
 COPY src/ /app/src/
 COPY tests/ /app/tests/
-COPY README.md STUDY_GUIDE.md /app/
-COPY AI\ Intern\ Case\ Study/ /app/AI\ Intern\ Case\ Study/
+COPY README.md /app/
+COPY ["AI Intern Case Study/", "/app/AI Intern Case Study/"]
 
 # Default entrypoint runs verification and CLI help
 CMD ["python3", "src/cli.py", "verify-reproducibility"]

@@ -19,6 +19,10 @@ venv/
 env/
 ENV/
 
+# Wrangler build artifacts
+.wrangler/
+cloudflare_worker/.wrangler/
+
 # Output artifacts that can be regenerated
 output/run_*_output.csv
 output/test_*.csv

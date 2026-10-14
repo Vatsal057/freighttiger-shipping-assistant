@@ -7,6 +7,5 @@ services:
       - ./output:/app/output
       - ./submission_output.csv:/app/submission_output.csv
     environment:
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
       - FREIGHTTIGER_LLM_PROXY_URL=${FREIGHTTIGER_LLM_PROXY_URL:-}
     command: python3 src/cli.py run
