@@ -1,0 +1,6 @@
+name = "freighttiger-llm-proxy"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# To set your secret Groq API key:
+# npx wrangler secret put GROQ_API_KEY
