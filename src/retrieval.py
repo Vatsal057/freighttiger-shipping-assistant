@@ -39,20 +39,17 @@ def retrieve_relevant_notes(
     Returns:
         List of (ContextNote, similarity_score) ranked by relevance.
     """
-    # 1. Filter by corridor applicability scope
     scoped_notes = [
         n for n in notes if n.applies_to == "All Routes" or n.applies_to == route
     ]
     if not scoped_notes:
         return []
 
-    # 2. Build corpus representations: note id, corridor, date, and text
     corpus = [
         f"{n.note_id} {n.applies_to} {n.date_str} {n.note_text}" for n in scoped_notes
     ]
     query_text = build_anomaly_query(route, week_of_str)
 
-    # 3. Vectorize with TF-IDF using sub-linear term frequency scaling and compute cosine similarity
     vectorizer = TfidfVectorizer(stop_words="english", sublinear_tf=True)
     tfidf_matrix = vectorizer.fit_transform(corpus + [query_text])
 
@@ -61,7 +58,6 @@ def retrieve_relevant_notes(
 
     similarities = cosine_similarity(query_vector, note_vectors)[0]
 
-    # 4. Rank and return top-k candidates
     ranked = sorted(
         zip(scoped_notes, similarities),
         key=lambda pair: pair[1],

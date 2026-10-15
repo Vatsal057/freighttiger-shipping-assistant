@@ -1,32 +1,30 @@
-# Python bytecode and caches
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
+
+# Environment and secrets
+.env
+.env.*
+.secrets
+mail.md
+.agents/
+skills-lock.json
+
+# IDE & OS
+.DS_Store
+.vscode/
+.idea/
+.wrangler/
+# Testing & caches
 .pytest_cache/
 .coverage
 htmlcov/
 
-# Environment files and credentials
-.env
-.env.*
-.secrets
-*.key
+# Explicitly track essential deliverables and cached responses
+!output/llm_cache.json
+!output/reproducibility_hashes.txt
+!output/cost_log.txt
+!output/eval_report.txt
 
-# Virtual environments
-venv/
-.venv/
-env/
-ENV/
-
-# Wrangler build artifacts
-.wrangler/
-cloudflare_worker/.wrangler/
-
-# Output artifacts that can be regenerated
-output/run_*_output.csv
-output/test_*.csv
-
-# OS metadata
-.DS_Store
-Thumbs.db
+*.pdf

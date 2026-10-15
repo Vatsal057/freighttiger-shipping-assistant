@@ -1,0 +1,20 @@
+FreightTiger Evaluation Harness — Regression Benchmark Scorecard (Mode: deterministic)
+=================================================================
+Total Test Cases Evaluated: 12
+Verdict Accuracy (Yes vs No (justified)): 100.0% (12/12)
+Note Attribution Accuracy: 100.0% (12/12)
+Planted Trap Disqualification Rate: 100.0% (6/6 distractors rejected)
+
+Case-by-Case Breakdown:
+  [✓ Verdict | ✓ Note] Delhi-Jaipur (2024-11-11): Sample Target 1 (Unexplained candidate spike)
+  [✓ Verdict | ✓ Note] Ahmedabad-Mumbai (2025-01-20): Sample Target 2 (Valid festival surcharge)
+  [✓ Verdict | ✓ Note] Mumbai-Pune (2025-09-15): Sample Target 3 (Unexplained candidate spike / Distractor N006)
+  [✓ Verdict | ✓ Note] Chennai-Bangalore (2025-02-24): Valid Disruption (Highway flooding active)
+  [✓ Verdict | ✓ Note] Chennai-Bangalore (2025-03-03): Valid Disruption (Highway flooding active)
+  [✓ Verdict | ✓ Note] Delhi-Chennai (2025-05-05): Valid Disruption (Nationwide diesel price hike)
+  [✓ Verdict | ✓ Note] Mumbai-Delhi (2024-07-29): Trap Check (N005 highway maintenance - costs not affected)
+  [✓ Verdict | ✓ Note] Delhi-Jaipur (2024-05-20): Trap Check (N007 road resurfacing - non-disruptive)
+  [✓ Verdict | ✓ Note] Kolkata-Bhubaneswar (2025-06-09): Trap Check (N008 freight remained normal)
+  [✓ Verdict | ✓ Note] Chennai-Bangalore (2025-03-17): Trap Check (N009 corridor returned to normal)
+  [✓ Verdict | ✓ Note] Mumbai-Pune (2025-10-27): Trap Check (N010 tracking mandate - costs absorbed)
+  [✓ Verdict | ✓ Note] Mumbai-Pune (2025-12-01): Unexplained Rate Creep (Structural peer gap outlier)

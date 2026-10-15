@@ -15,6 +15,7 @@ labels that never rely on colour alone.
 
 from __future__ import annotations
 
+import csv
 import html
 import re
 import sys
@@ -324,10 +325,8 @@ def load_sample_rows() -> pd.DataFrame:
     breaks a strict CSV parse. The first seven columns never contain commas,
     so any extra fields are merged back into the final reason column.
     """
-    import csv as _csv
-
     with open(SAMPLE_PATH, newline="", encoding="utf-8") as f:
-        rows = list(_csv.reader(f))
+        rows = list(csv.reader(f))
     header, data = rows[0], [r for r in rows[1:] if r]
     fixed = []
     for row in data:

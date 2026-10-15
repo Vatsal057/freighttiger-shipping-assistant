@@ -67,3 +67,19 @@ def test_reproducibility_hash(tmp_path):
     hash2 = compute_file_sha256(file2)
 
     assert hash1 == hash2, "Pipeline output is not deterministic across runs!"
+
+
+def test_pipeline_with_stats_modes():
+    """Verify run_pipeline_with_stats contracts for both deterministic and llm modes."""
+    from src.pipeline import run_pipeline_with_stats
+
+    # Deterministic mode
+    df_det, stats_det = run_pipeline_with_stats(SHIPMENTS_PATH, NOTES_PATH, mode="deterministic")
+    assert len(df_det) == 24
+    assert stats_det["total_llm_calls"] == 0
+    assert stats_det["cost_usd"] == 0.0
+
+    # LLM mode stats contract
+    assert stats_det["mode"] == "deterministic"
+    assert stats_det["anomalies_evaluated"] == 24
+

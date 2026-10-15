@@ -36,8 +36,6 @@ class AdaptiveLLMClient:
     Tier 2: Local Offline Grounded Synthesizer (100% reproducible, zero-cost fallback).
     """
 
-    # Published rates for Gemini 2.5 Flash / 1.5 Flash: $0.075 / 1M input, $0.30 / 1M output
-    # (Free tier gives 1,500 free requests per day, 1M TPM)
     INPUT_RATE_PER_MILLION = 0.075
     OUTPUT_RATE_PER_MILLION = 0.30
 
@@ -66,7 +64,6 @@ class AdaptiveLLMClient:
         deterministic_fallback_text: str = "",
     ) -> LLMResponse:
         """Generate text using Cloudflare Proxy or local offline fallback."""
-        # --- Tier 1: Cloudflare Edge Proxy (Gemini) ---
         if self.proxy_url:
             try:
                 headers = {
@@ -91,15 +88,13 @@ class AdaptiveLLMClient:
                             text=text,
                             input_tokens=in_toks,
                             output_tokens=out_toks,
-                            model_name=data.get("model", "gemini-2.5-flash (Edge Relay)"),
+                            model_name=data.get("model", "gemini-3.5-flash-lite (Edge Relay)"),
                             provider="Cloudflare Edge Proxy (Google Gemini)",
                             cost_usd=cost,
                         )
             except Exception as e:
                 logger.warning("Cloudflare Proxy invocation failed: %s; falling back to local synthesis", e)
 
-        # --- Tier 2: Local Offline Grounded Synthesizer ---
-        # Deterministic, zero-cost template synthesis without external API dependencies
         in_toks = self._estimate_tokens(system_prompt + " " + prompt)
         out_text = deterministic_fallback_text.strip()
         out_toks = self._estimate_tokens(out_text)

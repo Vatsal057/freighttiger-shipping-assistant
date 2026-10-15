@@ -14,7 +14,11 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from src.pipeline import run_pipeline
-from src.justification import load_context_notes, evaluate_route_week_justification
+from src.justification import (
+    load_context_notes,
+    evaluate_route_week_justification,
+    evaluate_route_week_with_llm,
+)
 
 DEFAULT_SHIPMENTS = Path("AI Intern Case Study/shipment_records.csv")
 DEFAULT_NOTES = Path("AI Intern Case Study/context_notes.csv")
@@ -25,11 +29,12 @@ def run_evaluation_harness(
     shipments_path: Path | str = DEFAULT_SHIPMENTS,
     notes_path: Path | str = DEFAULT_NOTES,
     labeled_path: Path | str = LABELED_SET,
+    mode: str = "deterministic",
 ) -> pd.DataFrame:
     """Score the pipeline against the curated regression benchmark."""
     labeled_df = pd.read_csv(labeled_path)
     notes = load_context_notes(notes_path)
-    pipeline_df = run_pipeline(shipments_path, notes_path)
+    pipeline_df = run_pipeline(shipments_path, notes_path, mode=mode)
 
     results = []
     correct_verdicts = 0
@@ -43,15 +48,16 @@ def run_evaluation_harness(
         exp_note = str(row["expected_note_id"]) if pd.notna(row["expected_note_id"]) else ""
         case_type = str(row["case_type"])
 
-        # Check if row is in pipeline candidate anomalies
         match = pipeline_df[(pipeline_df["route"] == route) & (pipeline_df["week_of"] == week_of)]
         if len(match) > 0:
             actual_flag = str(match.iloc[0]["flagged"])
             raw_nid = match.iloc[0]["matched_note_id"]
             actual_note = str(raw_nid) if pd.notna(raw_nid) else ""
         else:
-            # If not flagged by anomaly detector, evaluate justification directly
-            actual_flag, actual_note, _ = evaluate_route_week_justification(route, week_of, notes)
+            if mode == "llm":
+                actual_flag, actual_note, _, _ = evaluate_route_week_with_llm(route, week_of, notes)
+            else:
+                actual_flag, actual_note, _ = evaluate_route_week_justification(route, week_of, notes)
 
         verdict_match = (actual_flag == exp_flag)
         note_match = (actual_note == exp_note)
@@ -79,7 +85,6 @@ def run_evaluation_harness(
     accuracy_verdict = (correct_verdicts / total) * 100.0
     accuracy_note = (correct_notes / total) * 100.0
 
-    # Dynamically compute trap disqualification rate across all trap/distractor cases
     trap_cases = res_df[res_df["case_type"].str.contains("Trap|Distractor", case=False, na=False)]
     if len(trap_cases) > 0:
         traps_disqualified = int(((trap_cases["actual_flag"] == "Yes") & (trap_cases["actual_note"] == "")).sum())
@@ -88,20 +93,41 @@ def run_evaluation_harness(
     else:
         trap_stat = "N/A (no trap cases present)"
 
-    print("FreightTiger Evaluation Harness — Regression Benchmark Scorecard")
-    print("=================================================================")
-    print(f"Total Test Cases Evaluated: {total}")
-    print(f"Verdict Accuracy (Yes vs No (justified)): {accuracy_verdict:.1f}% ({correct_verdicts}/{total})")
-    print(f"Note Attribution Accuracy: {accuracy_note:.1f}% ({correct_notes}/{total})")
-    print(f"Planted Trap Disqualification Rate: {trap_stat}")
-    print("\nCase-by-Case Breakdown:")
+    scorecard_lines = [
+        f"FreightTiger Evaluation Harness — Regression Benchmark Scorecard (Mode: {mode})",
+        "=================================================================",
+        f"Total Test Cases Evaluated: {total}",
+        f"Verdict Accuracy (Yes vs No (justified)): {accuracy_verdict:.1f}% ({correct_verdicts}/{total})",
+        f"Note Attribution Accuracy: {accuracy_note:.1f}% ({correct_notes}/{total})",
+        f"Planted Trap Disqualification Rate: {trap_stat}",
+        "",
+        "Case-by-Case Breakdown:",
+    ]
     for _, r in res_df.iterrows():
         v_icon = "✓" if r["verdict_match"] else "✗"
         n_icon = "✓" if r["note_match"] else "✗"
-        print(f"  [{v_icon} Verdict | {n_icon} Note] {r['route']} ({r['week_of']}): {r['case_type']}")
+        scorecard_lines.append(f"  [{v_icon} Verdict | {n_icon} Note] {r['route']} ({r['week_of']}): {r['case_type']}")
+
+    scorecard_text = "\n".join(scorecard_lines)
+    print(scorecard_text)
+
+    report_file = Path("output/eval_report.txt")
+    report_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(report_file, "w", encoding="utf-8") as f:
+        f.write(scorecard_text + "\n")
+    print(f"\nSaved evaluation scorecard to: {report_file}")
 
     return res_df
 
 
 if __name__ == "__main__":
-    run_evaluation_harness()
+    import argparse
+    parser = argparse.ArgumentParser(description="FreightTiger Evaluation Harness")
+    parser.add_argument(
+        "--mode",
+        choices=["deterministic", "llm"],
+        default="deterministic",
+        help="Evaluation mode",
+    )
+    args = parser.parse_args()
+    run_evaluation_harness(mode=args.mode)

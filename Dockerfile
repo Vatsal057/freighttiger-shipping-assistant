@@ -17,10 +17,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source code, tests, and dataset
+# Copy source code, tests, dataset, and output cache
 COPY src/ /app/src/
 COPY tests/ /app/tests/
+COPY output/ /app/output/
 COPY README.md /app/
+COPY app.py /app/
+COPY submission_output.csv /app/
 COPY ["AI Intern Case Study/", "/app/AI Intern Case Study/"]
 
 # Default entrypoint runs verification and CLI help

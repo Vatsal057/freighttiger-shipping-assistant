@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 import pandas as pd
+
+if TYPE_CHECKING:
+    from src.llm_client import AdaptiveLLMClient
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -20,6 +28,9 @@ class ContextNote:
     active_start_date: str
     active_end_date: str
     disruption_summary: str
+
+
+from src.retrieval import retrieve_relevant_notes
 
 
 # Semantic guardrail patterns to identify planted distractors or negated disruptions
@@ -178,15 +189,11 @@ def evaluate_route_week_justification(
         flagged_verdict is either 'No (justified)' or 'Yes'.
         matched_note_id is the note ID if justified, else ''.
     """
-    from src.retrieval import retrieve_relevant_notes
-
     week_dt = datetime.strptime(week_of_str, "%Y-%m-%d")
 
-    # 1. Retrieve top-k candidates via TF-IDF cosine similarity
     retrieved = retrieve_relevant_notes(route, week_of_str, notes, top_k=top_k)
     candidate_notes = [pair[0] for pair in retrieved]
 
-    # 2. Deterministic verification gate over retrieved candidates
     for note in candidate_notes:
         if not note.is_valid_disruption:
             continue
@@ -204,7 +211,6 @@ def evaluate_route_week_justification(
             )
             return flagged, matched_id, reason
 
-    # 3. Temporal proximity check for nearest note in scope
     scoped_notes = [
         n for n in notes if n.applies_to == "All Routes" or n.applies_to == route
     ]
@@ -218,7 +224,6 @@ def evaluate_route_week_justification(
             min_day_diff = day_diff
             closest_note = note
 
-    # Check temporal proximity (within bi-weekly window of 14 days)
     if closest_note is not None and min_day_diff <= 14:
         flagged = "Yes"
         matched_id = ""
@@ -235,3 +240,240 @@ def evaluate_route_week_justification(
         "Cost rise looks unexplained and worth a human review."
     )
     return flagged, matched_id, reason
+
+
+CACHE_FILE = Path("output/llm_cache.json")
+
+
+def _get_cache_key(model_name: str, prompt: str, candidate_texts: str) -> str:
+    """Compute SHA-256 hash of model name, full prompt, and candidate note texts."""
+    payload = f"{model_name}\n{prompt}\n{candidate_texts}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _read_llm_cache() -> Dict[str, Any]:
+    """Read LLM response cache from output/llm_cache.json."""
+    if CACHE_FILE.exists():
+        try:
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def _write_llm_cache(cache_key: str, data: Dict[str, Any]) -> None:
+    """Write an entry to the LLM response cache."""
+    CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    cache = _read_llm_cache()
+    cache[cache_key] = data
+    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(cache, f, indent=2)
+
+
+def evaluate_route_week_with_llm(
+    route: str,
+    week_of_str: str,
+    notes: List[ContextNote],
+    vs_hist_str: str = "",
+    vs_peer_str: str = "",
+    client: Optional["AdaptiveLLMClient"] = None,
+    top_k: int = 3,
+) -> Tuple[str, str, str, Dict[str, Any]]:
+    """Evaluate whether a cost anomaly on a route and week is justified using an LLM.
+
+    Two-tier Architecture with Pre-gating and Response Cache:
+    1. Sparse Vector Retrieval: Retrieve top-k semantically relevant notes.
+    2. Deterministic Pre-Gate: Filter candidates through deterministic checks
+       (corridor scope, active date window, negation and normalcy rejection)
+       BEFORE calling the LLM. If no candidate survives, return 'Yes' with a
+       blank matched_note_id and make no LLM call.
+    3. Response Cache: Check output/llm_cache.json keyed by SHA-256 of (model, prompt, candidates).
+    4. LLM Reasoning (temperature=0): Evaluates surviving candidate notes and requires evidence_quote.
+    5. Evidence Quote & Post-Gate Validation: Validates that evidence_quote is a literal substring
+       of the chosen note text, and verifies date/route scope. Falls back to deterministic if invalid.
+    """
+    from src.llm_client import AdaptiveLLMClient
+
+    if client is None:
+        client = AdaptiveLLMClient()
+
+    week_dt = datetime.strptime(week_of_str, "%Y-%m-%d")
+    retrieved = retrieve_relevant_notes(route, week_of_str, notes, top_k=top_k)
+    candidate_notes = [pair[0] for pair in retrieved]
+
+    # Requirement 1: Pre-gate BEFORE calling LLM
+    surviving_candidates: List[ContextNote] = []
+    for n in candidate_notes:
+        if not (n.applies_to == "All Routes" or n.applies_to == route):
+            continue
+        if not n.is_valid_disruption:
+            continue
+        start_dt = datetime.strptime(n.active_start_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(n.active_end_date, "%Y-%m-%d")
+        week_end_dt = week_dt + pd.Timedelta(days=6)
+        if week_end_dt < start_dt or week_dt > end_dt:
+            continue
+        surviving_candidates.append(n)
+
+    # If no candidate survives pre-gate, return "Yes" with blank matched_note_id and 0 LLM calls
+    if not surviving_candidates:
+        det_flag, det_id, det_reason = evaluate_route_week_justification(
+            route, week_of_str, notes, top_k=top_k
+        )
+        return "Yes", "", det_reason, {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "llm_calls": 0,
+            "cache_hits": 0,
+        }
+
+    notes_text = "\n".join(
+        f"- [{n.note_id}] Date: {n.date_str}, Corridor: {n.applies_to}\n  Note: \"{n.note_text}\""
+        for n in surviving_candidates
+    )
+
+    # Requirement 2: Require evidence in JSON schema
+    prompt = f"""You are an expert freight shipping auditor for FreightTiger.
+Analyze the following shipping cost anomaly and determine whether it is justified by any candidate context note.
+
+Corridor: {route}
+Week of: {week_of_str}
+Comparison vs own history: {vs_hist_str}
+Comparison vs similar-length routes: {vs_peer_str}
+
+Pre-vetted Candidate Context Notes:
+{notes_text}
+
+AUDIT RULES:
+1. If a genuine disruption justifies the spike:
+   - verdict: "No (justified)"
+   - matched_note_id: the exact note id (e.g. "N001")
+   - evidence_quote: a literal, exact substring from the chosen note's text proving the disruption
+   - reason: "Matches note <ID> dated <DATE>: <summary>. The cost rise has a clear explanation."
+2. If none of the notes justify the spike:
+   - verdict: "Yes"
+   - matched_note_id: ""
+   - evidence_quote: ""
+   - reason: explanation why the rise is unexplained or not justified.
+
+Respond ONLY with valid JSON in this exact structure:
+{{
+  "verdict": "No (justified)" or "Yes",
+  "matched_note_id": "note_id_or_empty_string",
+  "evidence_quote": "exact_literal_quote_from_note_text",
+  "reason": "explanation string"
+}}"""
+
+    system_prompt = "You are a precise freight shipping audit assistant. Output JSON only."
+
+    # Requirement 3: Response Cache
+    model_name = getattr(client, "model_name", "gemini-3.5-flash-lite")
+    cache_key = _get_cache_key(model_name, prompt, notes_text)
+    cache = _read_llm_cache()
+
+    if cache_key in cache:
+        cached_entry = cache[cache_key]
+        raw_text = cached_entry["raw_text"]
+        usage_dict = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "llm_calls": 0,
+            "cache_hits": 1,
+        }
+    else:
+        try:
+            resp = client.generate(prompt=prompt, system_prompt=system_prompt)
+            raw_text = resp.text.strip()
+            usage_dict = {
+                "input_tokens": resp.input_tokens,
+                "output_tokens": resp.output_tokens,
+                "llm_calls": 1,
+                "cache_hits": 0,
+            }
+            _write_llm_cache(
+                cache_key,
+                {
+                    "raw_text": raw_text,
+                    "input_tokens": resp.input_tokens,
+                    "output_tokens": resp.output_tokens,
+                    "model": resp.model_name,
+                },
+            )
+        except Exception as e:
+            logger.warning("LLM call failed: %s; falling back to deterministic", e)
+            det_flag, det_id, det_reason = evaluate_route_week_justification(
+                route, week_of_str, notes, top_k=top_k
+            )
+            return det_flag, det_id, det_reason, {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "llm_calls": 0,
+                "cache_hits": 0,
+            }
+
+    try:
+        clean_text = raw_text
+        if "```json" in clean_text:
+            clean_text = clean_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in clean_text:
+            clean_text = clean_text.split("```")[1].split("```")[0].strip()
+        data = json.loads(clean_text)
+
+        verdict = str(data.get("verdict", "")).strip()
+        matched_id = str(data.get("matched_note_id", "")).strip()
+        evidence_quote = str(data.get("evidence_quote", "")).strip()
+        reason = str(data.get("reason", "")).strip()
+
+        if verdict == "No (justified)":
+            matching_notes = [n for n in surviving_candidates if n.note_id == matched_id]
+            if not matching_notes:
+                det_flag, det_id, det_reason = evaluate_route_week_justification(
+                    route, week_of_str, notes, top_k=top_k
+                )
+                return det_flag, det_id, det_reason, usage_dict
+
+            note_obj = matching_notes[0]
+
+            # Requirement 2 check: evidence_quote MUST be a literal substring of chosen note's text
+            if not evidence_quote or evidence_quote not in note_obj.note_text:
+                logger.warning(
+                    "Invalid evidence quote '%s' for note %s; falling back to deterministic",
+                    evidence_quote,
+                    matched_id,
+                )
+                det_flag, det_id, det_reason = evaluate_route_week_justification(
+                    route, week_of_str, notes, top_k=top_k
+                )
+                return det_flag, det_id, det_reason, usage_dict
+
+            # Second check: post-gate verification
+            start_dt = datetime.strptime(note_obj.active_start_date, "%Y-%m-%d")
+            end_dt = datetime.strptime(note_obj.active_end_date, "%Y-%m-%d")
+            week_end_dt = week_dt + pd.Timedelta(days=6)
+            is_overlapping = not (week_end_dt < start_dt or week_dt > end_dt)
+
+            if not note_obj.is_valid_disruption or not is_overlapping:
+                verdict = "Yes"
+                matched_id = ""
+                reason = (
+                    f"The closest note ({note_obj.note_id}, {note_obj.date_str}) mentions {note_obj.disruption_summary} -- "
+                    f"it does not describe a reason for a cost rise on this route. No genuine justification found; flagged for review."
+                )
+
+        elif verdict != "Yes":
+            verdict = "Yes"
+            matched_id = ""
+
+        if verdict == "Yes":
+            matched_id = ""
+
+        return verdict, matched_id, reason, usage_dict
+
+    except Exception as e:
+        logger.warning("LLM parsing failed: %s; falling back to deterministic", e)
+        det_flag, det_id, det_reason = evaluate_route_week_justification(
+            route, week_of_str, notes, top_k=top_k
+        )
+        return det_flag, det_id, det_reason, usage_dict
+

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def load_shipments(file_path: Path | str) -> pd.DataFrame:
@@ -27,6 +30,20 @@ def load_shipments(file_path: Path | str) -> pd.DataFrame:
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"Missing required columns in shipment records: {missing}")
+
+    initial_count = len(df)
+    valid_mask = (
+        (df["quantity_tonnes"] > 0)
+        & (df["distance_km"] > 0)
+        & (df["freight_cost_inr"] >= 0)
+    )
+    dropped_count = initial_count - int(valid_mask.sum())
+    if dropped_count > 0:
+        logger.warning(
+            "Data Quality Guard: Dropped %d invalid shipment rows (quantity<=0, distance<=0, or cost<0)",
+            dropped_count
+        )
+        df = df[valid_mask].copy()
 
     df["shipment_date"] = pd.to_datetime(df["shipment_date"])
     df["week_of"] = df["shipment_date"].apply(lambda d: d - pd.Timedelta(days=d.weekday()))
@@ -68,7 +85,6 @@ def compute_baselines(
             curr_cptk = row["cost_per_tonne_km"]
             week_of = row["week_of"]
 
-            # Calendar-based trailing window: strictly prior weeks within 56 days (8 weeks * 7 days)
             prior_slice = r_df[
                 (r_df["week_of"] < week_of)
                 & (r_df["week_of"] >= week_of - pd.Timedelta(days=trailing_weeks * 7))
@@ -144,12 +160,10 @@ def identify_candidate_anomalies(
     hist_diff = df_baselines["vs_hist_pct"].fillna(0.0)
     peer_diff = df_baselines["vs_peer_pct"].fillna(0.0)
 
-    # Standard route-specific or peer anomaly with strict rising condition
     standard_anomaly = (hist_diff >= hist_threshold_pct) | (
         (peer_diff >= peer_threshold_pct) & (df_baselines["vs_hist_pct"] > 0.0)
     )
 
-    # Macro surge detection: network-wide median cost rise >= macro_threshold_pct (5.0%)
     macro_weeks = set()
     for week_val, grp in df_baselines.groupby("week_of"):
         valid_hist = grp["vs_hist_pct"].dropna()

@@ -21,10 +21,13 @@ if str(ROOT_DIR) not in sys.path:
 
 from src.pipeline import (
     run_pipeline,
+    run_pipeline_with_stats,
     write_submission_csv,
     answer_natural_language_query,
+    DEFAULT_SYSTEM_PROMPT,
 )
 from src.justification import load_context_notes
+from src.llm_client import AdaptiveLLMClient
 
 DEFAULT_SHIPMENTS = Path("AI Intern Case Study/shipment_records.csv")
 DEFAULT_NOTES = Path("AI Intern Case Study/context_notes.csv")
@@ -42,12 +45,13 @@ def compute_file_sha256(file_path: Path) -> str:
 
 def cmd_run(args: argparse.Namespace) -> None:
     """Execute analysis pipeline and output CSV."""
-    print("Running FreightTiger Shipping Cost Assistant...")
-    out_df = run_pipeline(
+    print(f"Running FreightTiger Shipping Cost Assistant (Mode: {args.mode})...")
+    out_df, stats = run_pipeline_with_stats(
         shipments_path=args.shipments,
         notes_path=args.notes,
         hist_threshold_pct=args.hist_threshold,
         peer_threshold_pct=args.peer_threshold,
+        mode=args.mode,
     )
 
     out_path = Path(args.output)
@@ -55,6 +59,14 @@ def cmd_run(args: argparse.Namespace) -> None:
     file_hash = compute_file_sha256(out_path)
 
     print(f"Analysis complete. Total evaluated flags: {len(out_df)}")
+    if args.mode == "llm":
+        print(
+            f"LLM Reasoning: {stats['total_llm_calls']} API calls (misses) | "
+            f"{stats.get('total_cache_hits', 0)} Cache Hits | "
+            f"Input Tokens: {stats['total_input_tokens']} | "
+            f"Output Tokens: {stats['total_output_tokens']} | "
+            f"Cost: ${stats['cost_usd']:.5f}"
+        )
     print(f"Saved output CSV to: {out_path}")
     print(f"SHA-256 Hash: {file_hash}")
     print("\nFirst 5 rows of output:")
@@ -63,7 +75,7 @@ def cmd_run(args: argparse.Namespace) -> None:
 
 def cmd_verify_reproducibility(args: argparse.Namespace) -> None:
     """Execute pipeline 3 times and check that SHA-256 hashes are identical."""
-    print("Executing 3 untouched reproducibility runs on the input dataset...")
+    print(f"Executing 3 untouched reproducibility runs on the input dataset (Mode: {args.mode})...")
     hashes = []
 
     for run_idx in range(1, 4):
@@ -73,6 +85,7 @@ def cmd_verify_reproducibility(args: argparse.Namespace) -> None:
             notes_path=args.notes,
             hist_threshold_pct=args.hist_threshold,
             peer_threshold_pct=args.peer_threshold,
+            mode=args.mode,
         )
         write_submission_csv(out_df, run_file)
         h = compute_file_sha256(run_file)
@@ -90,8 +103,8 @@ def cmd_verify_reproducibility(args: argparse.Namespace) -> None:
         proof_path = Path("output/reproducibility_hashes.txt")
         proof_path.parent.mkdir(parents=True, exist_ok=True)
         with open(proof_path, "w", encoding="utf-8") as f:
-            f.write("FreightTiger 3-Run Reproducibility Audit Log\n")
-            f.write("============================================\n")
+            f.write(f"FreightTiger 3-Run Reproducibility Audit Log (Mode: {args.mode})\n")
+            f.write("========================================================\n")
             for idx, rfile, hval in hashes:
                 f.write(f"Run {idx}: {rfile} -> SHA-256: {hval}\n")
             f.write(f"\nVerdict: 100% Byte-Identical across 3 independent runs.\n")
@@ -104,46 +117,45 @@ def cmd_verify_reproducibility(args: argparse.Namespace) -> None:
 
 def cmd_cost_log(args: argparse.Namespace) -> None:
     """Print token and model cost accounting for one full pipeline run."""
-    out_df = run_pipeline(args.shipments, args.notes)
+    print(f"Accounting for full dataset run (Mode: {args.mode})...")
+    out_df, stats = run_pipeline_with_stats(args.shipments, args.notes, mode=args.mode)
     flagged_count = len(out_df)
 
-    # Profile token usage on a representative benchmark inquiry using subword heuristic
-    from src.llm_client import AdaptiveLLMClient
     client = AdaptiveLLMClient()
     notes = load_context_notes(args.notes)
     bench_query = "Why did Chennai-Bangalore get pricier in March 2025?"
     bench_response = answer_natural_language_query(bench_query, out_df, notes)
 
-    sample_system = (
-        "You are an expert shipping assistant for FreightTiger. "
-        "Answer the user's question directly and concisely based solely on the provided audit findings and context notes. "
-        "Do not invent facts or cite notes not present in the findings."
-    )
     sample_user = f"User Question: {bench_query}\n\nAudit Findings:\n{bench_response}\n\nPlease provide a clear, conversational answer."
-    est_prompt_tokens = client._estimate_tokens(sample_system + "\n" + sample_user)
+    est_prompt_tokens = client._estimate_tokens(DEFAULT_SYSTEM_PROMPT + "\n" + sample_user)
     est_completion_tokens = client._estimate_tokens(bench_response)
     hypothetical_cost = client._calculate_cost(est_prompt_tokens, est_completion_tokens)
     cents = hypothetical_cost * 100.0
     fraction = (1.0 / cents) if cents > 0 else 0.0
 
+    exec_desc = (
+        "LLM Reasoning with Deterministic Safety Gates (Google Gemini 3.5 Flash-Lite)"
+        if args.mode == "llm"
+        else "Fully Deterministic (Python, Pandas, TF-IDF Sparse Vector Retrieval)"
+    )
+
     log_lines = [
         "FreightTiger Assistant — Token & Cost Accounting Log",
         "===================================================",
-        "1. Core Pipeline Run (Entire Shipment Records File):",
-        "  • Execution Mode: Fully Deterministic (Python, Pandas, TF-IDF Sparse Vector Retrieval)",
-        "  • Total LLM calls in core pipeline: 0",
-        "  • Total input tokens: 0",
-        "  • Total output tokens: 0",
-        "  • Total tokens: 0",
-        "  • Total pipeline execution cost (USD): $0.00000",
+        f"1. Core Pipeline Run (Entire Shipment Records File) [Mode: {args.mode}]:",
+        f"  • Execution Mode: {exec_desc}",
+        f"  • Total LLM calls (API invocations / misses): {stats['total_llm_calls']}",
+        f"  • Total Cache Hits: {stats.get('total_cache_hits', 0)}",
+        f"  • Total input tokens: {stats['total_input_tokens']}",
+        f"  • Total output tokens: {stats['total_output_tokens']}",
+        f"  • Total tokens: {stats['total_input_tokens'] + stats['total_output_tokens']}",
+        f"  • Total pipeline execution cost (USD): ${stats['cost_usd']:.5f}",
         f"  • Flagged anomalies evaluated: {flagged_count}",
         "  • Architectural Principle: In financial anomaly auditing, attribution must be",
         "    predictable, verifiable, and byte-reproducible across runs.",
-        "    External LLMs are decoupled from the core financial ledger to prevent temperature drift.",
         "",
         "2. Interactive Conversational Assistant (Stretch Goal — On Demand):",
-        "  • Target Model: Google Gemini 2.5 Flash (via Cloudflare Edge Relay / Grounded Fallback)",
-        "  • Core Pipeline Invocations: 0 (Decoupled from core ledger; runs only on-demand via `python3 src/cli.py query ...`)",
+        "  • Target Model: Google Gemini 3.5 Flash-Lite (via Cloudflare Edge Relay / Grounded Fallback)",
         "  • Published Model Rates: $0.075 / 1M prompt tokens, $0.30 / 1M completion tokens",
         f"  • Profile for Benchmark Query: \"{bench_query}\"",
         f"    - Estimated Prompt Tokens (~4 chars/token): {est_prompt_tokens}",
@@ -155,13 +167,11 @@ def cmd_cost_log(args: argparse.Namespace) -> None:
     log_text = "\n".join(log_lines)
     print(log_text)
 
-    # Save cost log to disk as persistent artifact
     cost_file = Path("output/cost_log.txt")
     cost_file.parent.mkdir(parents=True, exist_ok=True)
     with open(cost_file, "w", encoding="utf-8") as f:
         f.write(log_text + "\n")
     print(f"\nSaved cost accounting log to: {cost_file}")
-
 
 
 def cmd_query(args: argparse.Namespace) -> None:
@@ -208,20 +218,44 @@ def main() -> None:
         default=20.0,
         help="Threshold %% vs peer routes to trigger flag",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["deterministic", "llm"],
+        default="deterministic",
+        help="Evaluation mode: 'deterministic' (fast, byte-reproducible rule engine) or 'llm' (Gemini reasoning)",
+    )
 
     subparsers = parser.add_subparsers(dest="command")
 
     # run command
-    subparsers.add_parser("run", help="Run full pipeline and generate output CSV")
+    run_parser = subparsers.add_parser("run", help="Run full pipeline and generate output CSV")
+    run_parser.add_argument(
+        "--mode",
+        choices=["deterministic", "llm"],
+        default="deterministic",
+        help="Evaluation mode: 'deterministic' or 'llm'",
+    )
 
     # verify-reproducibility command
-    subparsers.add_parser(
+    ver_parser = subparsers.add_parser(
         "verify-reproducibility",
         help="Run 3 consecutive runs and verify SHA-256 hash match",
     )
+    ver_parser.add_argument(
+        "--mode",
+        choices=["deterministic", "llm"],
+        default="deterministic",
+        help="Evaluation mode: 'deterministic' or 'llm'",
+    )
 
     # cost-log command
-    subparsers.add_parser("cost-log", help="Display token and cost accounting")
+    cost_parser = subparsers.add_parser("cost-log", help="Display token and cost accounting")
+    cost_parser.add_argument(
+        "--mode",
+        choices=["deterministic", "llm"],
+        default="deterministic",
+        help="Evaluation mode: 'deterministic' or 'llm'",
+    )
 
     # query command
     query_parser = subparsers.add_parser("query", help="Ask a question in plain English")

@@ -1,0 +1,22 @@
+FreightTiger Assistant — Token & Cost Accounting Log
+===================================================
+1. Core Pipeline Run (Entire Shipment Records File) [Mode: deterministic]:
+  • Execution Mode: Fully Deterministic (Python, Pandas, TF-IDF Sparse Vector Retrieval)
+  • Total LLM calls (API invocations / misses): 0
+  • Total Cache Hits: 0
+  • Total input tokens: 0
+  • Total output tokens: 0
+  • Total tokens: 0
+  • Total pipeline execution cost (USD): $0.00000
+  • Flagged anomalies evaluated: 24
+  • Architectural Principle: In financial anomaly auditing, attribution must be
+    predictable, verifiable, and byte-reproducible across runs.
+
+2. Interactive Conversational Assistant (Stretch Goal — On Demand):
+  • Target Model: Google Gemini 3.5 Flash-Lite (via Cloudflare Edge Relay / Grounded Fallback)
+  • Published Model Rates: $0.075 / 1M prompt tokens, $0.30 / 1M completion tokens
+  • Profile for Benchmark Query: "Why did Chennai-Bangalore get pricier in March 2025?"
+    - Estimated Prompt Tokens (~4 chars/token): 220
+    - Estimated Completion Tokens (~4 chars/token): 129
+    - Marginal Model Cost (if routed via Cloudflare to Gemini): $0.000055 (0.006¢, or ~1/181.8 of a cent)
+    - Offline Execution Mode: 0 API calls, $0.00000 (deterministic local synthesis)

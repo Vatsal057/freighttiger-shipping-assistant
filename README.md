@@ -1,211 +1,143 @@
-# FreightTiger — Smart Shipping Cost Anomaly Assistant
+# FreightTiger SWE Intern Case Study
 
-This project monitors weekly road shipping costs across Indian freight corridors, flags unjustified price spikes, and correlates candidate anomalies against external real-world context notes (fuel price hikes, flooding, festival surcharges, toll updates) to provide auditable, grounded justifications.
+Solution for the 24-hour take-home. It groups weekly shipments by route, tracks cost per tonne-km, flags anomalies against each route's own history and against peer routes, and checks the flags against the context notes to decide whether a spike is justified or unexplained.
 
-> 🚚 **Live Interactive Web App (Streamlit):** [https://freighttiger-shipping-assistant.streamlit.app](https://freighttiger-shipping-assistant.streamlit.app)  
-> ⚡ **Cloudflare Edge LLM Proxy (Google Gemini):** `https://freighttiger-llm-proxy.vatxzz.workers.dev`
+- Live Streamlit demo: https://freighttiger-shipping-assistant.streamlit.app
+- Cloudflare LLM proxy: https://freighttiger-llm-proxy.vatxzz.workers.dev
 
----
+## TL;DR
 
-## Quickstart
+- Core pipeline is deterministic by default: no LLM calls in default mode, $0.00, byte-identical output across runs.
+- Matches all 3 reference rows in `sample_output_format_v2.csv` exactly.
+- Eval harness: 12/12 verdicts, 12/12 note attributions, 6/6 planted traps rejected. 20/20 unit tests pass.
+- An opt-in LLM mode is also available (`--mode llm`), pre-gated and response-cached. The LLM is also used in the interactive query layer (CLI + Streamlit).
 
-Run these commands from the repository root:
+## How to run
 
 ```bash
-# 1. Run the core analysis pipeline and generate submission_output.csv
-python3 src/cli.py run
+# Setup
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 
-# 2. Verify 3-run byte-level reproducibility (SHA-256 hash match)
+# Generate submission_output.csv (default deterministic mode)
+python3 src/cli.py run --mode deterministic
+
+# Or run with opt-in LLM evaluation (pre-gated and response-cached)
+python3 src/cli.py run --mode llm
+
+# Check 3-run reproducibility (matching SHA-256)
 python3 src/cli.py verify-reproducibility
 
-# 3. View honest token usage and cost accounting log
-python3 src/cli.py cost-log
-
-# 4. Run the benchmark evaluation harness (scores against labeled test set)
+# Eval harness (12 labeled cases, supports --mode deterministic and --mode llm)
 python3 src/eval_harness.py
 
-# 5. Ask natural language questions about findings (stretch goal)
+# Unit tests (20)
+pytest
+
+# Ask a question in plain English (stretch goal)
 python3 src/cli.py query "why did Chennai-Bangalore get pricier in March 2025?"
 
-# 6. Run the comprehensive unit and guardrail test suite (15 tests)
-pytest tests/ -v
-
-# 7. Launch the interactive Streamlit Web Dashboard
+# Streamlit dashboard
 streamlit run app.py
 ```
 
----
+## Approach
 
-## Architectural Philosophy: Grounded Determinism vs. Generative Interface
+### Cost and baselines
 
-The system is deliberately engineered with a clean separation of concerns:
+- **Weekly cost per tonne-km:** grouped by `origin-destination`, `route_type` and Monday date (`week_of`). Computed as `sum(freight_cost_inr) / sum(quantity_tonnes * distance_km)`. I pooled cost and tonne-km instead of averaging per-shipment rates so small loads don't skew the corridor number. On this data the two methods differ by under 1% per week, but pooling is the right definition for spend.
+- **vs own history:** mean of the prior 8 weeks, strictly before the current week (no lookahead). With fewer than 8 weeks it averages what exists, with no padding. Week 1 returns `N/A (first week on this route)`.
+- **vs similar routes:** mean of the other routes with the same `route_type` in the same week. The route itself is excluded.
 
-1. **The Core Financial & Audit Ledger (`src/core_analysis.py`, `src/retrieval.py`, `src/justification.py`):**
-   * Financial anomaly detection must be **predictable, transparently auditable, and byte-reproducible** across runs.
-   * Attributing real monetary surcharges to transporters cannot rely on temperature-drifted LLM text generation.
-   * The core pipeline uses **TF-IDF Sparse Vector Retrieval** to retrieve top candidate notes, followed by a **deterministic verification gate** (corridor scope, active date boundaries, disruption polarity).
-   * Result: **0 external API dependencies, 0 LLM calls, $0.00 execution cost, and identical SHA-256 hashes**.
+### Anomaly rules
 
-2. **The Interactive Conversational Layer (`src/pipeline.py`, `src/cli.py`):**
-   * Generative AI belongs at the human interface.
-   * When operators ask free-form questions (*"why did Chennai-Bangalore get pricier in March?"* or *"which route is the worst offender?"*), the assistant operates offline by default using grounded template synthesis ($0.00, 0 external API calls), and optionally routes to LLaMA-3.3-70B on Groq only if `GROQ_API_KEY` is configured in the environment. Token metrics in the log are character-based estimates (~4 chars/token).
+A route-week is flagged if any of these hold:
 
----
+1. `vs_hist_pct >= 15%` (jump against own history).
+2. `vs_peer_pct >= 20%` **and** `vs_hist_pct > 0%` (peer outlier). The `> 0` condition stops a route being flagged when its own rates were flat and a peer simply dropped.
+3. Network-wide median `vs_hist_pct >= 5%`, which catches macro shocks like a nationwide diesel hike where every peer rises together and the peer gap stays near zero.
 
-## Mathematical Definitions & Baseline Logic
+Moving the historical cutoff anywhere between 12% and 20% gives the same flagged rows on this dataset, so I didn't tune it further.
 
-### 1. Weekly Cost per Tonne-KM
-For corridor $r$ in week $w$ (running Monday to Sunday, indexed by Monday's date `week_of`):
+**Mumbai-Pune rate creep:** rates climbed about 20% in late 2025. Because it happened gradually, the rolling 8-week history kept adapting and week-on-week jumps stayed under 10%. The 20% peer threshold against Delhi-Jaipur is what caught it. A multi-week persistence rule would isolate creep more cleanly in production.
 
-$$\text{Cost per tonne-km} = \frac{\sum \text{freight\_cost\_inr}}{\sum (\text{quantity\_tonnes} \times \text{distance\_km})}$$
+### Context notes and traps
 
-We aggregate total freight cost and total tonne-km across all shipments in that week before dividing. The volume-weighted pooled ratio is mathematically principled for freight spend accounting. On this specific dataset shipment sizes are relatively uniform (9–22 tonnes), resulting in a small empirical difference vs a naive ratio average (mean weekly delta 0.14%, max 0.58%), but the pooled ratio remains essential to prevent small parcel loads from distorting corridor spend.
+`context_notes.csv` has 10 notes, and most are traps:
 
-### 2. Baseline 1: Trailing 8-Week History (`vs_own_history`)
-We compute the arithmetic mean of weekly cost per tonne-km over the trailing 8 weeks strictly prior to the current week:
+| Note | Scope | Outcome |
+| :-- | :-- | :-- |
+| N001 | Chennai-Bangalore, floods | Valid for Feb 24 - Mar 8 only. Later weeks are flagged `Yes` (roads reopened Mar 9) |
+| N002 | Ahmedabad-Mumbai, festival surcharge | Valid for week of 2025-01-20 |
+| N003 | All routes, diesel hike | Valid for the macro-surge week of 2025-05-05 |
+| N004 | Routes outside the dataset | Rejected |
+| N005 | Mumbai-Delhi maintenance | Rejected, costs were unaffected |
+| N006 | Quarterly report, stable demand | Rejected, can't explain Mumbai-Pune |
+| N007 | Delhi-Jaipur resurfacing done | Rejected |
+| N008 | Kolkata-Bhubaneswar normal movement | Rejected |
+| N009 | Chennai-Bangalore back to normal | Rejected |
+| N010 | Tracking mandate, costs absorbed | Rejected |
 
-$$\text{Baseline}_{\text{hist}} = \frac{1}{K} \sum_{k=1}^{K} \text{Cost}_{w-k}, \quad K = \min(8, \text{prior weeks available})$$
+`src/justification.py` uses two stages:
 
-* **Zero Lookahead:** Future and current weeks never enter the baseline calculation.
-* **Early Weeks Handling (<8 Prior Weeks):** Week 1 has 0 prior weeks and returns `N/A (first week on this route)`. Weeks 2 to 8 use whatever prior weeks exist ($K = 1 \dots 7$) without invented placeholder padding or synthetic extrapolation.
-* **Continuous Time-Series:** Empirical verification confirms that all 7 corridors in `shipment_records.csv` contain exactly 104 contiguous weeks from `2024-01-01` to `2025-12-22` with zero missing calendar gaps.
+1. TF-IDF retrieval (`TfidfVectorizer` + cosine similarity) finds candidate notes for the corridor and week.
+2. A deterministic gate then rejects notes with negation or normalcy language (`costs were not affected`, `costs absorbed`, `returned to normal`, `outside this dataset`) and checks that the week falls inside the note's active date window.
 
-### 3. Baseline 2: Peer Route Comparison (`vs_similar_routes`)
-We take the arithmetic mean cost per tonne-km of other corridors in the same distance bucket (`Short`, `Medium`, or `Long`) during the exact same week:
+If no note passes, the row is `Yes` with a blank `matched_note_id`.
 
-$$\text{Baseline}_{\text{peer}} = \frac{1}{|P_r|} \sum_{p \in P_r} \text{Cost}_{p, w}, \quad P_r = \{p \in \text{Bucket} \mid p \neq r\}$$
+With only 10 notes, TF-IDF is effectively the same as a filtered scan. I kept it as the retrieval step so the design carries over to a larger notes corpus, but it isn't doing much work here.
 
-* **Strict Peer Exclusion:** The route itself is strictly excluded from its own peer average. For Short and Long categories (which contain exactly 2 corridors), a route's peer average is simply the counterpart route's cost.
+### Modes
 
----
+The pipeline provides two execution modes:
+- **`deterministic` (default):** 0 LLM calls, $0.00 cost, byte-identical output across runs (`57bfdedcc27726a31f51c1257372d39377ddd47d15a294efdd978dcc7a75dede`).
+- **`llm` (opt-in):** Evaluates candidate notes using Google Gemini 3.5 Flash-Lite. Candidates are pre-gated by corridor, active date window, and normalcy rejection before reaching the model (if no note survives, 0 LLM calls are made). The model must return an exact `evidence_quote` from the note text or it falls back to deterministic. All responses are cached in `output/llm_cache.json` (keyed by SHA-256 of model, prompt, and candidate texts), so repeat runs make 0 API calls (`070c6212337bf7a573b15136461a9e4edab9408c997ef8ef3a68ed57b4c823f7`).
 
-## Anomaly Detection Criteria & Threshold Rationale
+> **Note on LLM mode vs Deterministic mode:**
+> LLM mode is an opt-in layer. On the provided notes, the deterministic gate resolves every hard case before the model is called (disqualifying 16 of the 24 candidate anomalies, including all 6 distractor notes). The 8 rows that reached the model are straightforward matches (N001, N002, N003), so both modes agree on all 24 verdicts and note attributions by construction. The 6/6 distractors rejected in LLM mode reflects the gate's work, not the model's. The LLM's true value is robustness to unseen, nuanced note phrasing, which this curated dataset does not stress.
 
-A route-week is flagged as a candidate anomaly if it satisfies any of the following three criteria:
+### Why deterministic is the default
 
-1. **Historical Spike:** Cost jumped $\ge 15.0\%$ above its own trailing 8-week baseline (`vs_hist_pct >= 15.0`).
-   * *Sensitivity:* Given typical corridor weekly coefficient of variation of ~2.5% (and 6.7% on Delhi-Jaipur), 15% represents roughly a 6σ threshold. On this dataset, setting the historical cutoff anywhere from 12% to 20% yields the exact same candidate rows.
-2. **Peer Outlier with Strict Rising Gate:** Cost jumped $\ge 20.0\%$ above its same-week peers (`vs_peer_pct >= 20.0`) **AND** cost is actively rising relative to its own past average (`vs_hist_pct > 0.0`).
-   * *Rationale for `hist > 0`:* Requiring `hist > 0` prevents flagging a route whose costs actually *fell* or stayed flat simply because its peer route experienced a temporary rate drop (suppressing false positives such as Mumbai-Pune on 2025-11-10 where peer was +21.4% but own history was −0.1%).
-3. **Network-Wide Macro Surge:** Systemic shocks (such as nationwide diesel hikes) push costs up across *all* corridors simultaneously by 5–7%. In such weeks, peer difference remains near 0% because all peers rise together. We detect macro shocks when the **network-wide median cost rise** is $\ge 5.0\%$ (`median(vs_hist_pct) >= 5.0%`).
+The brief asked for reproducibility and trust. Handing records unconstrained to an LLM to decide flags and attribution brings run-to-run drift in flags and wording, a risk of pinning a cost spike on a distractor note, and API cost and latency for a batch job. Rules plus TF-IDF give 0 LLM calls in default mode and identical output every run.
 
-### The Mumbai-Pune Rate Creep Case Study
-Mumbai-Pune operates with an inherent ~11% structural cost premium over Delhi-Jaipur (its sole Short-haul peer). In the second half of 2025, Mumbai-Pune costs drifted upward (smoothed H1 to Q4 average rose +20.7%, with rates accelerating sharply from September onward to reach ₹4.49). Because this drift occurred over months, the trailing 8-week baseline adapted, keeping weekly historical jumps moderate (+3% to +9%). The peer threshold caught this gradual inflation against Delhi-Jaipur. In production, tracking each corridor's peer gap against its historical baseline and enforcing a multi-week persistence rule (e.g. 2 of 3 weeks) provides even cleaner creep isolation.
+I kept LLM calls for the opt-in evaluator mode and the interactive assistant (`src/cli.py query` and the Streamlit chat), where free-form questions benefit from generation. It goes through a Cloudflare Worker proxy (`cloudflare_worker/`) to Google Gemini 3.5 Flash-Lite, with a local template fallback when offline.
 
----
+## Verification
 
-## Verification Against Sample Benchmark Data
+**Sample parity.** Matches the 3 reference rows in `sample_output_format_v2.csv` character for character:
 
-The analysis engine matches all 3 sample validation rows from `sample_output_format_v2.csv` character-for-character:
+- `Delhi-Jaipur` (2024-11-11): 4.17 cptk, +35.5% vs history, +21.0% vs peers, `Yes` (unexplained).
+- `Ahmedabad-Mumbai` (2025-01-20): 3.29 cptk, +29.5% vs history, +22.5% vs peers, `No (justified)`, note `N002`.
+- `Mumbai-Pune` (2025-09-15): 3.98 cptk, +9.2% vs history, +23.6% vs peers, `Yes` (distractor N006 rejected).
 
-| Corridor | Week of | Metric | Sample Target | Pipeline Output | Verification Status |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Delhi-Jaipur** | 2024-11-11 | Cost per tonne-km | 4.17 | 4.17 | Exact Match |
-| | | vs. own history | +35.5% vs this route's past average | +35.5% vs this route's past average | Exact Match |
-| | | vs. similar routes | +21.0% vs similar-length routes this week | +21.0% vs similar-length routes this week | Exact Match |
-| | | Flagged / Note | `Yes` / Blank | `Yes` / `""` | Exact Match |
-| **Ahmedabad-Mumbai** | 2025-01-20 | Cost per tonne-km | 3.29 | 3.29 | Exact Match |
-| | | vs. own history | +29.5% vs this route's past average | +29.5% vs this route's past average | Exact Match |
-| | | vs. similar routes | +22.5% vs similar-length routes this week | +22.5% vs similar-length routes this week | Exact Match |
-| | | Flagged / Note | `No (justified)` / `N002` | `No (justified)` / `N002` | Exact Match |
-| **Mumbai-Pune** | 2025-09-15 | Cost per tonne-km | 3.98 | 3.98 | Exact Match |
-| | | vs. own history | +9.2% vs this route's past average | +9.2% vs this route's past average | Exact Match |
-| | | vs. similar routes | +23.6% vs similar-length routes this week | +23.6% vs similar-length routes this week | Exact Match |
-| | | Flagged / Note | `Yes` / Blank | `Yes` / `""` | Exact Match |
+**Reproducibility.** Three clean runs over `shipment_records.csv` gave the same SHA-256 (also in `output/reproducibility_hashes.txt`):
 
----
+`57bfdedcc27726a31f51c1257372d39377ddd47d15a294efdd978dcc7a75dede`
 
-## Context Notes, Sparse Vector Retrieval & Guardrails
+**Eval harness** (`src/eval_harness.py`, 12 labeled cases in `tests/labeled_evaluation_set.csv`):
 
-The 10 notes in `context_notes.csv` contain real disruptions along with deliberate distractor traps:
+Scores 100% in both default deterministic and LLM modes (`--mode deterministic` and `--mode llm`):
+- Verdict accuracy: 12/12 (100.0%)
+- Note attribution accuracy: 12/12 (100.0%)
+- Planted trap rejection: 6/6 (100.0% distractors rejected — pre-gate rejected before LLM)
 
-| Note ID | Corridor | Date | Classification | Handling & Guardrail |
-| :--- | :--- | :--- | :--- | :--- |
-| **N001** | Chennai-Bangalore | 2025-02-24 | **Valid Disruption** | Flooding forced detours; justifies weeks `2025-02-24` and `2025-03-03`. Weeks after March 8 are flagged `Yes` (roads reopened March 9). |
-| **N002** | Ahmedabad-Mumbai | 2025-01-20 | **Valid Disruption** | Festival truck shortage and temporary surcharge. Justifies week `2025-01-20`. |
-| **N003** | All Routes | 2025-05-05 | **Valid Disruption** | Nationwide diesel price hike of 5–7%. Justifies macro surge week `2025-05-05`. |
-| **N004** | All Routes | 2024-03-11 | **Trap (Disqualified)** | Note explicitly states affected routes are outside this dataset. |
-| **N005** | Mumbai-Delhi | 2024-07-29 | **Trap (Disqualified)** | Highway maintenance caused minor delays; note explicitly states costs were unaffected. |
-| **N006** | All Routes | 2025-09-22 | **Trap (Disqualified)** | Quarterly logistics report noting stable demand and no major disruptions. Rejected as an excuse for Mumbai-Pune price rises. |
-| **N007** | Delhi-Jaipur | 2024-05-20 | **Trap (Disqualified)** | Road resurfacing completed; road improvements do not explain cost increases. |
-| **N008** | Kolkata-Bhubaneswar | 2025-06-09 | **Trap (Disqualified)** | Normal freight movement reported; cannot justify cost spikes. |
-| **N009** | Chennai-Bangalore | 2025-03-17 | **Trap (Disqualified)** | Confirms corridor returned to normal after flood repairs. |
-| **N010** | All Routes | 2025-10-27 | **Trap (Disqualified)** | Vehicle tracking mandate; note confirms compliance costs were absorbed without rate changes. |
+The set is small and I wrote it myself, so treat it as a regression check, not a benchmark.
 
-### Sparse Vector Retrieval (`src/retrieval.py`)
-Rather than scanning notes with naive loops, candidate anomalies construct a query:
-`f"{route} {origin} {destination} {week_of_str} shipping freight cost rise disruption surcharge detour"`
-The module uses **TF-IDF sparse vector representations** with sub-linear term frequency scaling and cosine similarity to retrieve the top candidate notes before passing them to the verification gate. 
+## Cost log
 
-*Scale note:* In a 10-note corpus with exact corridor filtering, sparse vector retrieval is functionally equivalent to an exhaustive filtered scan. Its primary value here is demonstrating the production two-stage retrieval architecture (fast lexical/dense retrieval $\rightarrow$ deterministic rule verification) necessary when scaling to thousands of multi-depot operational logs.
+- Core pipeline (default mode): 0 LLM calls, 0 tokens, $0.00.
+- Core pipeline (LLM mode): 8 API calls on initial run ($0.00053); 0 API calls and 8 cache hits on repeat run ($0.00000).
+- Interactive query: about 220 input / 130 output tokens, roughly $0.000056 per query at Gemini Flash rates.
 
----
+## Repo structure
 
-## Benchmark Evaluation Harness (`src/eval_harness.py`)
-
-To satisfy the brief's requirement (*"Show a check — a lightweight eval harness or a small labeled set you score against — and why you trusted the result enough to submit"*), we built a standalone regression evaluation harness scoring against `tests/labeled_evaluation_set.csv`:
-
-* **Evaluation Scope:** 12 curated regression cases covering sample targets, active flood windows, festival surcharges, nationwide diesel shocks, distractor traps, and long-term rate creep.
-* **Verdict Accuracy (`Yes` vs `No (justified)`):** **100.0% (12/12)**.
-* **Note Attribution Accuracy:** **100.0% (12/12)**.
-* **Planted Trap Disqualification Rate:** **100.0% (6/6 distractors rejected)**, dynamically computed from the labeled distractor and trap cases.
-
-Run the harness anytime via:
-```bash
-python3 src/eval_harness.py
-```
-
----
-
-## 3-Run Reproducibility Proof
-
-Running three untouched pipeline passes over the raw dataset produces byte-identical CSV files:
-
-```text
-Run 1: output/run_1_output.csv -> SHA-256: 57bfdedcc27726a31f51c1257372d39377ddd47d15a294efdd978dcc7a75dede
-Run 2: output/run_2_output.csv -> SHA-256: 57bfdedcc27726a31f51c1257372d39377ddd47d15a294efdd978dcc7a75dede
-Run 3: output/run_3_output.csv -> SHA-256: 57bfdedcc27726a31f51c1257372d39377ddd47d15a294efdd978dcc7a75dede
-```
-
-* **Canonical SHA-256 Hash:** `57bfdedcc27726a31f51c1257372d39377ddd47d15a294efdd978dcc7a75dede`
-* **Saved Audit Artifact:** `output/reproducibility_hashes.txt`
-
----
-
-## Token and Cost Accounting Log
-
-In strict adherence to the brief's requirement for an honest cost log:
-
-| Component | Target Model | LLM Calls | Input Tokens | Output Tokens | Total Cost (USD) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Core Anomaly Pipeline (Full Run)** | Fully Deterministic (Python / TF-IDF) | **0** | **0** | **0** | **$0.00000** |
-| **Interactive Q&A Assistant (On Demand)** | Google Gemini 2.5 Flash (via Cloudflare Edge Relay) | 1 per query | ~465 (estimated) | ~375 (estimated) | ~$0.000147 (~1/68¢) |
-
-* **Saved Audit Artifact:** `output/cost_log.txt`
-* **Accounting Principle:** We report **0 LLM calls** for the core pipeline because attributing financial penalties to transporters cannot rely on temperature-sensitive generative models.
-* **Token Estimation:** Offline token metrics use word/char subword heuristics (~4 chars/token). Real API calls log exact usage from the provider response object.
-
----
-
-## Engineering Trade-offs & Production Considerations
-
-### 1. Volume-Weighted Metric Aggregation
-* **Decision:** Weekly cost per tonne-km is calculated as $\frac{\sum \text{freight\_cost}}{\sum \text{tonne-km}}$, pooling total cost and total freight work across all shipments in that corridor-week.
-* **Trade-off:** Calculating the arithmetic mean of individual shipment rates ($\text{mean}(\frac{\text{cost}}{\text{tonne-km}})$) would allow a 1-tonne LTL parcel to carry identical weight to a 25-tonne multi-axle trailer, distorting corridor economics. The pooled ratio reflects true enterprise freight spend.
-
-### 2. Rolling History Window & Cold-Start Adaptation
-* **Decision:** Historical baseline uses strictly prior weeks ($w-8 \dots w-1$) with zero lookahead. Early weeks ($w < 8$) use all available prior weeks ($K = 1 \dots 7$).
-* **Trade-off:** Padding early weeks with synthetic or forward-looking averages introduces lookahead bias. Truncating to available history without padding maintains strict causality and temporal integrity.
-
-### 3. Dual-Thresholding & Mitigating Inflationary Creep
-* **Decision:** Anomalies trigger at $\ge 15\%$ historical jump or $\ge 20\%$ peer divergence with $\text{hist} > 0$, supplemented by a network-wide median rule ($\ge 5\%$) for macro fuel shocks.
-* **Trade-off:** A rolling 8-week baseline naturally adapts to gradual price drift. For corridors like Mumbai-Pune (where rates climbed +32% across 2025), week-on-week historical jumps stayed under 10%. The peer divergence threshold caught this quiet inflation. Requiring $\text{hist} > 0$ ensures a route is never flagged simply because a peer route had an unexpected cost drop.
-
-### 4. Two-Stage Sparse Retrieval vs. Direct Generative Gating
-* **Decision:** The pipeline pairs TF-IDF sparse vector retrieval with a deterministic verification gate (scope, date bounds, polarity).
-* **Trade-off:** Full end-to-end LLM classification on every route-week risks non-deterministic hallucinations, latency, and API costs. By using TF-IDF for candidate selection and deterministic rule verification for justification, the audit ledger achieves zero hallucination, 100% byte reproducibility, and $0.00 execution cost.
-
-### 5. Adversarial Guardrails & Distractor Rejection
-* **Decision:** Notes with negative polarity (e.g., *N005: "costs were unaffected"*, *N008: "movement remained normal"*, *N010: "costs absorbed without rate increases"*) are strictly barred from justifying price increases.
-* **Trade-off:** Permissive semantic matching would allow superficial keyword hits (e.g., "highway maintenance") to falsely justify transporter price gouging. Strict polarity gating ensures only verifiable disruptions exonerate candidate rate spikes.
-
+- `src/core_analysis.py`: weekly aggregation, rolling history, peer averages, anomaly rules
+- `src/retrieval.py`: TF-IDF search over context notes
+- `src/justification.py`: date windows, negation regexes, pre-gating, trap rejection
+- `src/pipeline.py`: loads data, scores anomalies, justifies, exports CSV
+- `src/llm_client.py`: Cloudflare proxy client with offline fallback
+- `src/eval_harness.py`: scores the pipeline against the labeled set
+- `src/cli.py`: `run`, `verify-reproducibility`, `cost-log`, `query`
+- `app.py`: Streamlit dashboard
+- `output/llm_cache.json`: pre-populated LLM response cache for zero-drift reproducibility
+- `submission_output.csv`: output in the required format

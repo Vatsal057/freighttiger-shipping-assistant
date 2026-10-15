@@ -1,0 +1,92 @@
+{
+  "61a7023afc0647a1714eaa63733e05cc6552bc047d435f340ca8ae2f5ea1828c": {
+    "raw_text": "{\n  \"verdict\": \"No (justified)\",\n  \"matched_note_id\": \"N002\",\n  \"evidence_quote\": \"A regional festival week saw a temporary surcharge applied by transporters on the Ahmedabad-Mumbai corridor due to high demand and limited truck availability.\",\n  \"reason\": \"Matches note N002 dated 2025-01-20: A regional festival week caused high demand and limited truck availability, leading to a temporary surcharge on the Ahmedabad-Mumbai corridor. The cost rise has a clear explanation.\"\n}",
+    "input_tokens": 405,
+    "output_tokens": 121,
+    "model": "gemini-3.5-flash-lite"
+  },
+  "0cf9a31bde64bbcfc529475e7f1e7add69fecfcfd8f0d00038f64de92446b146": {
+    "raw_text": "{\n  \"verdict\": \"No (justified)\",\n  \"matched_note_id\": \"N001\",\n  \"evidence_quote\": \"Heavy flooding on the Chennai-Bangalore highway disrupted normal truck movement from Feb 24 to Mar 8, forcing longer detours and higher trip costs.\",\n  \"reason\": \"Matches note N001 dated 2025-02-24: Heavy flooding on the Chennai-Bangalore highway disrupted normal truck movement, forcing longer detours and higher trip costs. The cost rise has a clear explanation.\"\n}",
+    "input_tokens": 422,
+    "output_tokens": 126,
+    "model": "gemini-3.5-flash-lite"
+  },
+  "3c9f4960bdc3ec671554e23e5c356b6694da5d0e5a303d793864d62cd8377433": {
+    "raw_text": "{\n  \"verdict\": \"No (justified)\",\n  \"matched_note_id\": \"N001\",\n  \"evidence_quote\": \"Heavy flooding on the Chennai-Bangalore highway disrupted normal truck movement from Feb 24 to Mar 8, forcing longer detours and higher trip costs.\",\n  \"reason\": \"Matches note N001 dated 2025-02-24: Heavy flooding on the Chennai-Bangalore highway disrupted normal truck movement from Feb 24 to Mar 8, forcing longer detours and higher trip costs. The cost rise has a clear explanation.\"\n}",
+    "input_tokens": 422,
+    "output_tokens": 135,
+    "model": "gemini-3.5-flash-lite"
+  },
+  "b2c2f0ea1066d0e1ac997d24f682f0f99dea0faa7d709eca9389097159353cc6": {
+    "raw_text": "{\n  \"verdict\": \"No (justified)\",\n  \"matched_note_id\": \"N003\",\n  \"evidence_quote\": \"Diesel prices rose nationwide starting this week, pushing up transportation costs across all routes by roughly 5-7%.\",\n  \"reason\": \"Matches note N003 dated 2025-05-05: Diesel prices rose nationwide starting this week, pushing up transportation costs across all routes by roughly 5-7%.. The cost rise has a clear explanation.\"\n}",
+    "input_tokens": 399,
+    "output_tokens": 117,
+    "model": "gemini-3.5-flash-lite"
+  },
+  "6e50d7bfae00467626e3b98e7a5b52db7fb1d5aea106e172a8baf181fce1ba32": {
+    "raw_text": "{\n  \"verdict\": \"No (justified)\",\n  \"matched_note_id\": \"N003\",\n  \"evidence_quote\": \"Diesel prices rose nationwide starting this week, pushing up transportation costs across all routes by roughly 5-7%.\",\n  \"reason\": \"Matches note N003 dated 2025-05-05: Diesel prices rose nationwide starting this week, pushing up transportation costs across all routes by roughly 5-7%.. The cost rise has a clear explanation.\"\n}",
+    "input_tokens": 400,
+    "output_tokens": 117,
+    "model": "gemini-3.5-flash-lite"
+  },
+  "5be54192845527a8822349d5ea59085f722d62ada3fcdfb7cc52ee944097aec6": {
+    "raw_text": "{\n  \"verdict\": \"No (justified)\",\n  \"matched_note_id\": \"N003\",\n  \"evidence_quote\": \"Diesel prices rose nationwide starting this week, pushing up transportation costs across all routes by roughly 5-7%.\",\n  \"reason\": \"Matches note N003 dated 2025-05-05: Diesel prices rose nationwide starting this week, pushing up transportation costs across all routes by roughly 5-7%.. The cost rise has a clear explanation.\"\n}",
+    "input_tokens": 401,
+    "output_tokens": 117,
+    "model": "gemini-3.5-flash-lite"
+  },
+  "5f38e2a1ffb3a235bee63b63398394fb22d6ed6257c39eca6a1d0fb0740108c8": {
+    "raw_text": "{\n  \"verdict\": \"No (justified)\",\n  \"matched_note_id\": \"N003\",\n  \"evidence_quote\": \"Diesel prices rose nationwide starting this week, pushing up transportation costs across all routes by roughly 5-7%.\",\n  \"reason\": \"Matches note N003 dated 2025-05-05: Diesel prices rose nationwide starting this week, pushing up transportation costs across all routes by roughly 5-7%.. The cost rise has a clear explanation.\"\n}",
+    "input_tokens": 399,
+    "output_tokens": 117,
+    "model": "gemini-3.5-flash-lite"
+  },
+  "4dbdec48216ae932401c55630a03b8b49456c099980657b0e68832b85b187831": {
+    "raw_text": "{\n  \"verdict\": \"No (justified)\",\n  \"matched_note_id\": \"N003\",\n  \"evidence_quote\": \"Diesel prices rose nationwide starting this week, pushing up transportation costs across all routes by roughly 5-7%.\",\n  \"reason\": \"Matches note N003 dated 2025-05-05: Diesel prices rose nationwide starting this week, pushing up transportation costs across all routes by roughly 5-7%. The cost rise has a clear explanation.\"\n}",
+    "input_tokens": 399,
+    "output_tokens": 116,
+    "model": "gemini-3.5-flash-lite"
+  },
+  "3e2860fdcd6f4701972851e5c4a1e18438e483e3dffbaf3fe64c1a2e408919b8": {
+    "raw_text": "{\n  \"verdict\": \"No (justified)\",\n  \"matched_note_id\": \"N002\",\n  \"evidence_quote\": \"A regional festival week saw a temporary surcharge applied by transporters on the Ahmedabad-Mumbai corridor due to high demand and limited truck availability.\",\n  \"reason\": \"Matches note N002 dated 2025-01-20: A regional festival week saw a temporary surcharge applied by transporters on the Ahmedabad-Mumbai corridor due to high demand and limited truck availability.. The cost rise has a clear explanation.\"\n}",
+    "input_tokens": 396,
+    "output_tokens": 123,
+    "model": "gemini-3.5-flash-lite"
+  },
+  "c2e56e4c1c0bf4d679bc744d55bafd30ce1dc0661ef1b53d2e74c622556d21e7": {
+    "raw_text": "{\"verdict\": \"No (justified)\", \"matched_note_id\": \"N002\", \"evidence_quote\": \"THIS TEXT DOES NOT EXIST IN NOTE\", \"reason\": \"Festival surcharge.\"}",
+    "input_tokens": 100,
+    "output_tokens": 30,
+    "model": "mock-bad-quote"
+  },
+  "97c623381dfb0b79a9d8d0ce9b73ff5f440cb24f29d8cbcd4341400da2bd19bf": {
+    "raw_text": "{\"verdict\": \"No (justified)\", \"matched_note_id\": \"N002\", \"evidence_quote\": \"THIS TEXT DOES NOT EXIST IN NOTE\", \"reason\": \"Festival surcharge.\"}",
+    "input_tokens": 100,
+    "output_tokens": 30,
+    "model": "mock-bad-quote"
+  },
+  "cc66deafb5133955e97f9dc1b0c19a9d3d825d3f613e961fe6a6d5f20209137f": {
+    "raw_text": "{\"verdict\": \"No (justified)\", \"matched_note_id\": \"N002\", \"evidence_quote\": \"THIS TEXT DOES NOT EXIST IN NOTE\", \"reason\": \"Festival surcharge.\"}",
+    "input_tokens": 100,
+    "output_tokens": 30,
+    "model": "mock-bad-quote"
+  },
+  "2bfdd9a3eb818a6650bccd12e3b1c28fb651649657a715f5d63854bf50ac9747": {
+    "raw_text": "{\"verdict\": \"No (justified)\", \"matched_note_id\": \"N002\", \"evidence_quote\": \"THIS TEXT DOES NOT EXIST IN NOTE\", \"reason\": \"Festival surcharge.\"}",
+    "input_tokens": 100,
+    "output_tokens": 30,
+    "model": "mock-bad-quote"
+  },
+  "b0ec50ed872c620826952e2fee437c434f94b47e88e490f5ae37da074b03b885": {
+    "raw_text": "{\"verdict\": \"No (justified)\", \"matched_note_id\": \"N002\", \"evidence_quote\": \"THIS TEXT DOES NOT EXIST IN NOTE\", \"reason\": \"Festival surcharge.\"}",
+    "input_tokens": 100,
+    "output_tokens": 30,
+    "model": "mock-bad-quote"
+  },
+  "73d71c4ac2b13fb07622c58952459458aa7fb0cfa36c7c799f50738fe6b09003": {
+    "raw_text": "{\"verdict\": \"No (justified)\", \"matched_note_id\": \"N002\", \"evidence_quote\": \"THIS TEXT DOES NOT EXIST IN NOTE\", \"reason\": \"Festival surcharge.\"}",
+    "input_tokens": 100,
+    "output_tokens": 30,
+    "model": "mock-bad-quote"
+  }
+}

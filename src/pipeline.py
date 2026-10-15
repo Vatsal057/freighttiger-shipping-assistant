@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import re
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from src.core_analysis import (
@@ -18,7 +18,16 @@ from src.core_analysis import (
 from src.justification import (
     load_context_notes,
     evaluate_route_week_justification,
+    evaluate_route_week_with_llm,
     ContextNote,
+)
+from src.retrieval import retrieve_relevant_notes
+from src.llm_client import AdaptiveLLMClient
+
+DEFAULT_SYSTEM_PROMPT = (
+    "You are an expert shipping assistant for FreightTiger. "
+    "Answer the user's question directly and concisely based solely on the provided audit findings and context notes. "
+    "Do not invent facts or cite notes not present in the findings."
 )
 
 
@@ -27,12 +36,42 @@ def run_pipeline(
     notes_path: Path | str,
     hist_threshold_pct: float = 15.0,
     peer_threshold_pct: float = 20.0,
+    mode: str = "deterministic",
+    llm_client: Optional[AdaptiveLLMClient] = None,
 ) -> pd.DataFrame:
     """Execute end-to-end analysis and return final report DataFrame.
+
+    Args:
+        shipments_path: Path to shipment_records.csv
+        notes_path: Path to context_notes.csv
+        hist_threshold_pct: Threshold % vs trailing own history (default: 15.0)
+        peer_threshold_pct: Threshold % vs peer routes (default: 20.0)
+        mode: "deterministic" (default, byte-identical rule engine) or "llm" (Gemini reasoning)
+        llm_client: Optional AdaptiveLLMClient instance
 
     Columns strictly match sample_output_format_v2.csv:
     route,week_of,cost_per_tonne_km,vs_own_history,vs_similar_routes,flagged,matched_note_id,reason
     """
+    df, _ = run_pipeline_with_stats(
+        shipments_path=shipments_path,
+        notes_path=notes_path,
+        hist_threshold_pct=hist_threshold_pct,
+        peer_threshold_pct=peer_threshold_pct,
+        mode=mode,
+        llm_client=llm_client,
+    )
+    return df
+
+
+def run_pipeline_with_stats(
+    shipments_path: Path | str,
+    notes_path: Path | str,
+    hist_threshold_pct: float = 15.0,
+    peer_threshold_pct: float = 20.0,
+    mode: str = "deterministic",
+    llm_client: Optional[AdaptiveLLMClient] = None,
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Execute analysis and return both report DataFrame and execution stats."""
     shipments = load_shipments(shipments_path)
     weekly = aggregate_weekly_route_costs(shipments)
     baselines = compute_baselines(weekly, trailing_weeks=8)
@@ -43,6 +82,11 @@ def run_pipeline(
     )
     notes = load_context_notes(notes_path)
 
+    total_in_tokens = 0
+    total_out_tokens = 0
+    total_llm_calls = 0
+    total_cache_hits = 0
+
     output_rows: List[Dict[str, str]] = []
     for _, row in candidates.iterrows():
         route = str(row["route"])
@@ -51,9 +95,23 @@ def run_pipeline(
         vs_hist = format_percentage_diff(row["vs_hist_pct"], "history")
         vs_peer = format_percentage_diff(row["vs_peer_pct"], "peer")
 
-        flagged, matched_note_id, reason = evaluate_route_week_justification(
-            route, week_of, notes
-        )
+        if mode == "llm":
+            flagged, matched_note_id, reason, usage = evaluate_route_week_with_llm(
+                route=route,
+                week_of_str=week_of,
+                notes=notes,
+                vs_hist_str=vs_hist,
+                vs_peer_str=vs_peer,
+                client=llm_client,
+            )
+            total_in_tokens += usage.get("input_tokens", 0)
+            total_out_tokens += usage.get("output_tokens", 0)
+            total_llm_calls += usage.get("llm_calls", 0)
+            total_cache_hits += usage.get("cache_hits", 0)
+        else:
+            flagged, matched_note_id, reason = evaluate_route_week_justification(
+                route, week_of, notes
+            )
 
         output_rows.append(
             {
@@ -69,8 +127,21 @@ def run_pipeline(
         )
 
     out_df = pd.DataFrame(output_rows)
-    # Deterministic sorting: by week_of ascending, then route ascending
-    return out_df.sort_values(["week_of", "route"]).reset_index(drop=True)
+    sorted_df = out_df.sort_values(["week_of", "route"]).reset_index(drop=True)
+
+    client_ref = llm_client or AdaptiveLLMClient()
+    cost_usd = client_ref._calculate_cost(total_in_tokens, total_out_tokens) if total_llm_calls > 0 else 0.0
+
+    stats = {
+        "mode": mode,
+        "anomalies_evaluated": len(candidates),
+        "total_llm_calls": total_llm_calls,
+        "total_cache_hits": total_cache_hits,
+        "total_input_tokens": total_in_tokens,
+        "total_output_tokens": total_out_tokens,
+        "cost_usd": cost_usd,
+    }
+    return sorted_df, stats
 
 
 def write_submission_csv(df: pd.DataFrame, target_path: Path | str) -> None:
@@ -130,18 +201,11 @@ def answer_natural_language_query(
                 t_str = f"{t_count} flagged week" if t_count == 1 else f"{t_count} flagged weeks"
                 summary_lines.append(f"  - {r['route']}: {t_str} ({u_str}, {j_str})")
             base_summary = "\n".join(summary_lines)
-
-            from src.llm_client import AdaptiveLLMClient
             client = AdaptiveLLMClient()
-            system_prompt = (
-                "You are an expert shipping assistant for FreightTiger. "
-                "Answer the user's question directly and concisely based solely on the provided audit findings. "
-                "Do not invent corridors or numbers not present in the findings."
-            )
             user_prompt = f"User Question: {query}\n\nAudit Findings:\n{base_summary}\n\nPlease provide a clear, conversational answer."
             response = client.generate(
                 prompt=user_prompt,
-                system_prompt=system_prompt,
+                system_prompt=DEFAULT_SYSTEM_PROMPT,
                 deterministic_fallback_text=base_summary,
             )
             return response.text
@@ -154,7 +218,6 @@ def answer_natural_language_query(
     route = matched_routes[0]
     route_rows = pipeline_df[pipeline_df["route"] == route]
 
-    # Filter by month if mentioned (using word boundaries to prevent false positives like 'market' -> 'mar')
     months = {
         "january": "01", "february": "02", "march": "03", "april": "04",
         "may": "05", "june": "06", "july": "07", "august": "08",
@@ -173,7 +236,6 @@ def answer_natural_language_query(
     else:
         filtered = route_rows
 
-    # Filter by calendar year if specified (e.g. 2024 or 2025)
     year_match = re.search(r"\b(2024|2025)\b", query_lower)
     if year_match:
         target_year = year_match.group(1)
@@ -190,9 +252,6 @@ def answer_natural_language_query(
             f"Verdict: {row['flagged']}. Reason: {row['reason']}"
         )
 
-    # Incorporate relevant context notes: include notes that directly justified filtered
-    # anomalies or retrieved top candidates for these specific weeks
-    from src.retrieval import retrieve_relevant_notes
     relevant_note_ids = set()
     for _, row in filtered.iterrows():
         nid = row.get("matched_note_id")
@@ -215,18 +274,11 @@ def answer_natural_language_query(
         + f"\n\nApplicable Context Notes:\n{notes_context}"
     )
 
-    # Use AdaptiveLLMClient to synthesize answer if external key or proxy is enabled
-    from src.llm_client import AdaptiveLLMClient
     client = AdaptiveLLMClient()
-    system_prompt = (
-        "You are an expert shipping assistant for FreightTiger. "
-        "Answer the user's question directly and concisely based solely on the provided audit findings and context notes. "
-        "Do not invent facts or cite notes not present in the findings."
-    )
     user_prompt = f"User Question: {query}\n\nAudit Findings:\n{base_summary}\n\nPlease provide a clear, conversational answer."
     response = client.generate(
         prompt=user_prompt,
-        system_prompt=system_prompt,
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
         deterministic_fallback_text=base_summary,
     )
     return response.text

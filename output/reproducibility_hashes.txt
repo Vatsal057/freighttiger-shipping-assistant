@@ -1,0 +1,8 @@
+FreightTiger 3-Run Reproducibility Audit Log (Mode: deterministic)
+========================================================
+Run 1: output/run_1_output.csv -> SHA-256: 57bfdedcc27726a31f51c1257372d39377ddd47d15a294efdd978dcc7a75dede
+Run 2: output/run_2_output.csv -> SHA-256: 57bfdedcc27726a31f51c1257372d39377ddd47d15a294efdd978dcc7a75dede
+Run 3: output/run_3_output.csv -> SHA-256: 57bfdedcc27726a31f51c1257372d39377ddd47d15a294efdd978dcc7a75dede
+
+Verdict: 100% Byte-Identical across 3 independent runs.
+Canonical Hash: 57bfdedcc27726a31f51c1257372d39377ddd47d15a294efdd978dcc7a75dede
